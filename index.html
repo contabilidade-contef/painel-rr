@@ -82,7 +82,7 @@ dialog::backdrop{background:rgba(10,15,50,.45)}
 "use strict";
 const SB_URL = "https://lojajjqeokueksgcywmv.supabase.co";
 const SB_KEY = "sb_publishable_POx82-gZ52ZbCASMRw3V-w__gMLARAL";
-const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, detectSessionInUrl: true } });
+const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, detectSessionInUrl: true }, global: { fetch: (...a) => window.fetch(...a) } });
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -185,7 +185,7 @@ function montarApp() {
     <a href="#extrato" data-r="extrato">Extrato de movimentações</a>
    </nav>
    <main id="main"></main></div>`;
-  $("#bSair").onclick = async () => { await sb.auth.signOut(); };
+  $("#bSair").onclick = async () => { limparCache(); await sb.auth.signOut(); };
   $("#bSenha").onclick = () => trocarSenha("Trocar senha");
   $("#bMenu").onclick = () => $("#side").classList.toggle("aberta");
   $("#bNovo").onclick = (e) => { e.stopPropagation(); $("#mNovo").classList.toggle("aberto"); };
@@ -193,6 +193,7 @@ function montarApp() {
   $("#mNovo").querySelectorAll("button").forEach((b) => b.onclick = async () => { $("#mNovo").classList.remove("aberto");
     const ok = b.dataset.v ? await dlgVenda() : b.dataset.p ? await dlgProduto() : await dlgTitulo(b.dataset.n); if (ok) rota(); });
   window.onhashchange = rota; rota();
+  setTimeout(() => { abertos().catch(() => {}); movimentos().catch(() => {}); notasLista().catch(() => {}); }, 300);
 }
 function rota() {
   const r = (location.hash || "#inicio").slice(1); const R = ROTAS[r] && (r !== "estoque" || CFG.estoque) ? r : "inicio";
@@ -209,16 +210,24 @@ function situacao(t) {
   return { txt: "Em aberto", cls: "p-aberto", k: "avencer" };
 }
 async function todos(q) { const out = []; for (let i = 0; ; i += 1000) { const { data, error } = await q().range(i, i + 999); if (error) throw error; out.push(...data); if (data.length < 1000) return out; } }
+// cache em memória: telas abrem na hora; qualquer gravação limpa o cache
+const CACHE = new Map(); const TTL = 90000;
+function cache(chave, carregar, ttl = TTL) { const c = CACHE.get(chave); if (c && Date.now() - c.t < ttl) return c.p;
+  const p = carregar().catch((e) => { CACHE.delete(chave); throw e; }); CACHE.set(chave, { t: Date.now(), p }); return p; }
+function notasLista() { return cache("notas", async () => { const { data, error } = await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 500 }); if (error) throw error; return data || []; }, 20000); }
+function limparCache() { CACHE.clear(); try { TOMADORES = null; } catch (_) {} }
+const RPC_LEITURA = /\/rpc\/(fin_minhas_notas|fin_tomadores|fin_servicos|fin_nota_arquivo)\b/;
+(() => { const f0 = window.fetch.bind(window); window.fetch = (u, o) => { try { const url = String(u?.url || u), m = String(o?.method || u?.method || "GET").toUpperCase();
+  if (m !== "GET" && m !== "HEAD" && url.includes("/rest/v1/") && !RPC_LEITURA.test(url)) limparCache(); } catch (_) {} return f0(u, o); }; })();
 
 // ---------- início ----------
 async function telaInicio() {
   carregando();
   const h = hoje(), ate = addMes(h, 0).slice(0, 8) + "31";
-  const ab = await todos(() => sb.from("fin_titulos").select("id,tipo,descricao,valor,vencimento,pessoa_id,status").eq("empresa_id", EMP).eq("status", "aberto").order("vencimento"));
+  const [ab, saldos] = await Promise.all([abertos(), saldoContas()]);
   const soma = (arr) => arr.reduce((a, t) => a + Number(t.valor), 0);
   const rec = ab.filter((t) => t.tipo === "receber"), pag = ab.filter((t) => t.tipo === "pagar");
   const prox = ab.filter((t) => t.vencimento >= h && t.vencimento <= addMes(h, 0).slice(0, 8) + "31").slice(0, 12);
-  const saldos = await saldoContas();
   $("#main").innerHTML = `<h1>Início</h1>
    <div class="grid2">
     <div class="box"><h3>A receber</h3><div class="sub">Vencidos</div><div class="kpi verm">${brl(soma(rec.filter((t) => t.vencimento < h)))}</div><div class="sub">Vencem hoje</div><div class="kpi">${brl(soma(rec.filter((t) => t.vencimento === h)))}</div><p><a href="#receber">Ver contas a receber</a></p></div>
@@ -227,12 +236,14 @@ async function telaInicio() {
    </div>
    <div class="box"><h3>Próximos vencimentos deste mês</h3>${prox.length ? `<table><thead><tr><th>Vencimento</th><th>Descrição</th><th class="n">Valor</th></tr></thead><tbody>${prox.map((t) => `<tr><td>${dbr(t.vencimento)}</td><td>${esc(t.descricao)}<div class="sub">${t.tipo === "receber" ? "A receber" : "A pagar"}${t.pessoa_id ? " · " + esc(pesNome(t.pessoa_id)) : ""}</div></td><td class="n ${t.tipo === "pagar" ? "verm" : "verde"}">${t.tipo === "pagar" ? "-" : ""}${brl(t.valor)}</td></tr>`).join("")}</tbody></table>` : `<div class="sub">Nada vencendo até o fim do mês.</div>`}</div>`;
 }
-async function movimentos() {
-  const tit = await todos(() => sb.from("fin_titulos").select("id,tipo,descricao,categoria,valor_pago,valor,pago_em,conta_id,pessoa_id").eq("empresa_id", EMP).eq("status", "pago"));
-  const tr = await todos(() => sb.from("fin_extrato").select("id,data,valor,direcao,memo,conta_id").eq("empresa_id", EMP).eq("status", "transferencia"));
+function abertos() { return cache("abertos", () => todos(() => sb.from("fin_titulos").select("id,tipo,descricao,valor,vencimento,pessoa_id,status").eq("empresa_id", EMP).eq("status", "aberto").order("vencimento"))); }
+function movimentos() { return cache("mov", async () => {
+  const [tit, tr] = await Promise.all([
+    todos(() => sb.from("fin_titulos").select("id,tipo,descricao,categoria,valor_pago,valor,pago_em,conta_id,pessoa_id").eq("empresa_id", EMP).eq("status", "pago").order("id")),
+    todos(() => sb.from("fin_extrato").select("id,data,valor,direcao,memo,conta_id").eq("empresa_id", EMP).eq("status", "transferencia").order("id"))]);
   return [...tit.map((t) => ({ d: t.pago_em, v: (t.tipo === "receber" ? 1 : -1) * Number(t.valor_pago ?? t.valor), desc: t.descricao, cat: catNome(t.categoria), pes: pesNome(t.pessoa_id), conta: t.conta_id, sit: t.tipo === "receber" ? "Recebido" : "Pago", cls: "p-pago" })),
           ...tr.map((x) => ({ d: x.data, v: (x.direcao === "credito" ? 1 : -1) * Number(x.valor), desc: x.memo, cat: "Transferência", pes: "", conta: x.conta_id, sit: "Transferido", cls: "p-transf" }))].filter((m) => m.d);
-}
+}); }
 async function saldoContas() {
   const mv = await movimentos();
   return CONTAS.filter((c) => c.ativo !== false).map((c) => ({ nome: c.nome, saldo: Number(c.saldo_inicial || 0) + mv.filter((m) => m.conta === c.id && m.d <= hoje()).reduce((a, m) => a + m.v, 0) }));
@@ -245,7 +256,7 @@ async function telaTitulos(tipo) {
   carregando();
   const [y, m] = st.mes.split("-").map(Number); const ini = st.mes + "-01", fim = iso(new Date(y, m, 0));
   let lista;
-  try { lista = await todos(() => { let q = sb.from("fin_titulos").select("*").eq("empresa_id", EMP).eq("tipo", tipo).neq("status", "cancelado"); if (!st.todos) q = q.gte("vencimento", ini).lte("vencimento", fim); return q.order("vencimento").order("descricao"); }); }
+  try { lista = await cache(`tit:${tipo}:${st.todos ? "*" : st.mes}`, () => todos(() => { let q = sb.from("fin_titulos").select("*").eq("empresa_id", EMP).eq("tipo", tipo).neq("status", "cancelado"); if (!st.todos) q = q.gte("vencimento", ini).lte("vencimento", fim); return q.order("vencimento").order("descricao").order("id"); })); }
   catch (e) { $("#main").innerHTML = `<div class="aviso err">Não foi possível carregar: ${esc(e.message)}</div>`; return; }
   lista.forEach((t) => t._s = situacao(t));
   const soma = (k) => lista.filter((t) => k === "*" || t._s.k === k).reduce((a, t) => a + Number(t.valor), 0);
@@ -472,9 +483,12 @@ async function tomadores() { if (!TOMADORES) { const { data } = await sb.rpc("fi
 async function telaVendas() {
   carregando();
   const [y, m] = SV.mes.split("-").map(Number); const ini = SV.mes + "-01", fim = iso(new Date(y, m, 0));
-  const { data: vendas, error } = await sb.from("fin_vendas").select("*").eq("empresa_id", EMP).gte("data", ini).lte("data", fim).order("data", { ascending: false }).order("numero", { ascending: false });
-  if (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
-  const notas = {}; (await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 500 })).data?.forEach((n) => notas[n.pedido_id] = n);
+  let vendas, lnotas;
+  try { [vendas, lnotas] = await Promise.all([
+    cache("vendas:" + SV.mes, async () => { const { data, error } = await sb.from("fin_vendas").select("*").eq("empresa_id", EMP).gte("data", ini).lte("data", fim).order("data", { ascending: false }).order("numero", { ascending: false }); if (error) throw error; return data; }),
+    notasLista()]); }
+  catch (e) { $("#main").innerHTML = `<div class="aviso err">${esc(e.message)}</div>`; return; }
+  const notas = {}; lnotas.forEach((n) => notas[n.pedido_id] = n);
   const sitTxt = { orcamento: ["Orçamento", "p-aberto"], aprovado: ["Aprovado", "p-pago"], cancelado: ["Cancelado", ""] };
   const soma = (s) => vendas.filter((v) => !s || v.situacao === s).reduce((a, v) => a + Number(v.total), 0);
   const cont = (s) => vendas.filter((v) => v.situacao === s).length;
@@ -640,8 +654,7 @@ async function dlgSolicitarNfse(v) {
 // ---------- notas fiscais de serviço ----------
 async function telaNotas() {
   carregando();
-  const { data, error } = await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 300 });
-  if (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
+  let data; try { data = await notasLista(); } catch (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
   $("#main").innerHTML = `<h1>Notas fiscais de serviço</h1>
    <div class="barra"><span class="sub">As notas são emitidas pela CONTEF. Quando a nota sai, o XML e o PDF ficam disponíveis aqui.</span><span style="margin-left:auto"></span><button class="btn azul" id="nNova" type="button">+ ${CFG.financiada ? "Solicitar NFS-e de comissão" : "Solicitar NFS-e"}</button></div>
    <div class="tab">${(data || []).length ? `<table><thead><tr><th>Solicitada em</th><th>Descrição</th><th>Situação</th><th>Número</th><th>Arquivos</th></tr></thead><tbody>
