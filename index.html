@@ -162,18 +162,23 @@ const optsCat = (nat, sel) => `<option value="">Selecione</option>` + CATS.filte
 const optsConta = (sel, vazio = "Não informada") => `<option value="">${vazio}</option>` + CONTAS.filter((x) => x.ativo !== false).map((x) => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${esc(x.nome)}</option>`).join("");
 
 // ---------- estrutura ----------
-const ROTAS = { inicio: "Início", receber: "Contas a receber", pagar: "Contas a pagar", extrato: "Extrato de movimentações" };
+const ROTAS = { inicio: "Início", vendas: "Vendas", notas: "Notas fiscais de serviço", estoque: "Produtos", receber: "Contas a receber", pagar: "Contas a pagar", extrato: "Extrato de movimentações" };
 function montarApp() {
   $("#raiz").innerHTML = `<div class="app">
    <header class="top"><button class="btn menuBtn" id="bMenu" aria-label="Abrir menu">☰</button>
     <div class="logo"><span class="moeda">$</span>CONTEF <small>${esc(EMP_NOME)}</small></div>
     <div class="esp"></div>
     <div class="novo"><button class="btn azul" id="bNovo" aria-haspopup="true">+ Novo registro</button>
-      <div class="menu" id="mNovo"><button type="button" data-n="receber">Nova receita</button><button type="button" data-n="pagar">Nova despesa</button></div></div>
+      <div class="menu" id="mNovo"><button type="button" data-v="1">Nova venda</button><button type="button" data-n="receber">Nova receita</button><button type="button" data-n="pagar">Nova despesa</button><button type="button" data-p="1">Novo produto</button></div></div>
     <div class="quem">${esc(USER.email)}<br><button class="link" id="bSenha">Trocar senha</button></div>
     <button class="btn" id="bSair">Sair</button></header>
    <nav class="side" id="side" aria-label="Menu">
     <a href="#inicio" data-r="inicio">Início</a>
+    <div class="sec">Vendas</div>
+    <a href="#vendas" data-r="vendas">Vendas</a>
+    <a href="#notas" data-r="notas">Notas fiscais de serviço</a>
+    <div class="sec">Estoque</div>
+    <a href="#estoque" data-r="estoque">Produtos</a>
     <div class="sec">Financeiro</div>
     <a href="#receber" data-r="receber">Contas a receber</a>
     <a href="#pagar" data-r="pagar">Contas a pagar</a>
@@ -185,14 +190,15 @@ function montarApp() {
   $("#bMenu").onclick = () => $("#side").classList.toggle("aberta");
   $("#bNovo").onclick = (e) => { e.stopPropagation(); $("#mNovo").classList.toggle("aberto"); };
   document.addEventListener("click", () => $("#mNovo")?.classList.remove("aberto"));
-  $("#mNovo").querySelectorAll("button").forEach((b) => b.onclick = async () => { $("#mNovo").classList.remove("aberto"); if (await dlgTitulo(b.dataset.n)) rota(); });
+  $("#mNovo").querySelectorAll("button").forEach((b) => b.onclick = async () => { $("#mNovo").classList.remove("aberto");
+    const ok = b.dataset.v ? await dlgVenda() : b.dataset.p ? await dlgProduto() : await dlgTitulo(b.dataset.n); if (ok) rota(); });
   window.onhashchange = rota; rota();
 }
 function rota() {
   const r = (location.hash || "#inicio").slice(1); const R = ROTAS[r] ? r : "inicio";
   document.querySelectorAll(".side a").forEach((a) => a.dataset.r === R ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   $("#side").classList.remove("aberta");
-  ({ inicio: telaInicio, receber: () => telaTitulos("receber"), pagar: () => telaTitulos("pagar"), extrato: telaExtrato })[R]();
+  ({ inicio: telaInicio, vendas: telaVendas, notas: telaNotas, estoque: telaEstoque, receber: () => telaTitulos("receber"), pagar: () => telaTitulos("pagar"), extrato: telaExtrato })[R]();
 }
 function carregando() { $("#main").innerHTML = `<div class="vazio">Carregando…</div>`; }
 function situacao(t) {
@@ -386,6 +392,266 @@ async function telaExtrato() {
   $("#xAnt").onclick = () => { SX.mes = addMes(SX.mes + "-01", -1).slice(0, 7); telaExtrato(); };
   $("#xProx").onclick = () => { SX.mes = addMes(SX.mes + "-01", 1).slice(0, 7); telaExtrato(); };
   $("#xConta").onchange = (e) => { SX.conta = e.target.value; telaExtrato(); };
+}
+
+// ---------- estoque ----------
+let PRODUTOS = [];
+async function carregarProdutos() { const { data, error } = await sb.from("fin_produtos").select("*").eq("empresa_id", EMP).order("nome"); if (error) throw error; PRODUTOS = data; return data; }
+const SE = { busca: "", sit: "ativo" };
+async function telaEstoque() {
+  carregando();
+  try { await carregarProdutos(); } catch (e) { $("#main").innerHTML = `<div class="aviso err">${esc(e.message)}</div>`; return; }
+  let vis = PRODUTOS.filter((p) => SE.sit === "todos" || (SE.sit === "ativo" ? p.ativo : !p.ativo));
+  if (SE.busca) { const b = SE.busca.toLowerCase(); vis = vis.filter((p) => (p.nome + " " + (p.sku || "") + " " + (p.chassi || "") + " " + (p.placa || "")).toLowerCase().includes(b)); }
+  const qtd = PRODUTOS.filter((p) => p.ativo).reduce((a, p) => a + Number(p.quantidade), 0);
+  const valEst = PRODUTOS.filter((p) => p.ativo).reduce((a, p) => a + Number(p.quantidade) * Number(p.valor_venda || 0), 0);
+  $("#main").innerHTML = `<h1>Produtos</h1>
+   <div class="barra"><input type="search" id="eBusca" placeholder="Pesquisar por nome, código, chassi ou placa" value="${esc(SE.busca)}" style="min-width:280px">
+    <select id="eSit"><option value="ativo" ${SE.sit === "ativo" ? "selected" : ""}>Ativos</option><option value="inativo" ${SE.sit === "inativo" ? "selected" : ""}>Inativos</option><option value="todos" ${SE.sit === "todos" ? "selected" : ""}>Todos</option></select>
+    <span style="margin-left:auto"></span><button class="btn azul" id="eNovo" type="button">+ Novo produto</button></div>
+   <div class="cards"><button type="button" disabled><small>Produtos ativos</small><b>${PRODUTOS.filter((p) => p.ativo).length}</b></button><button type="button" disabled><small>Unidades em estoque</small><b>${qtd.toLocaleString("pt-BR")}</b></button><button type="button" disabled><small>Valor em estoque (preço de venda)</small><b>${brl(valEst)}</b></button></div>
+   <div class="tab">${vis.length ? `<table><thead><tr><th>Produto</th><th>Código (SKU)</th><th class="n">Valor de venda</th><th class="n">Custo</th><th class="n">Estoque disponível</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+    ${vis.map((p) => `<tr><td><b>${esc(p.nome)}</b><div class="sub">${[p.marca, p.ano_modelo, p.cor, p.chassi && "Chassi " + p.chassi, p.placa && "Placa " + p.placa].filter(Boolean).map(esc).join(" · ")}</div></td>
+     <td>${esc(p.sku || "")}</td><td class="n">${brl(p.valor_venda)}</td><td class="n">${p.custo ? brl(p.custo) : "—"}</td>
+     <td class="n ${Number(p.quantidade) <= 0 ? "verm" : ""}">${Number(p.quantidade).toLocaleString("pt-BR")}</td>
+     <td><span class="pill ${p.ativo ? "p-pago" : ""}">${p.ativo ? "Ativo" : "Inativo"}</span></td>
+     <td><select class="pAcao" data-id="${p.id}" aria-label="Ações"><option value="">Ações</option><option value="editar">Editar</option><option value="entrada">Entrada no estoque</option><option value="ajuste">Ajustar quantidade</option><option value="hist">Movimentações</option><option value="ativo">${p.ativo ? "Inativar" : "Ativar"}</option></select></td></tr>`).join("")}
+   </tbody></table>` : `<div class="vazio">Nenhum produto.</div>`}</div>`;
+  $("#eBusca").onchange = (e) => { SE.busca = e.target.value; telaEstoque(); };
+  $("#eSit").onchange = (e) => { SE.sit = e.target.value; telaEstoque(); };
+  $("#eNovo").onclick = async () => { if (await dlgProduto()) telaEstoque(); };
+  document.querySelectorAll(".pAcao").forEach((s) => s.onchange = async () => {
+    const p = PRODUTOS.find((x) => x.id === s.dataset.id), a = s.value; s.value = ""; let ok = false;
+    if (a === "editar") ok = await dlgProduto(p);
+    if (a === "entrada" || a === "ajuste") ok = await dlgMov(p, a);
+    if (a === "hist") await dlgHist(p);
+    if (a === "ativo") { const { error } = await sb.from("fin_produtos").update({ ativo: !p.ativo }).eq("id", p.id); if (error) toast(error.message, "warn"); else ok = true; }
+    if (ok) telaEstoque();
+  });
+}
+async function dlgProduto(p) {
+  const ed = !!p; p = p || { nome: "", sku: "", valor_venda: "", custo: "", quantidade: 0, marca: "", ano_modelo: "", cor: "", chassi: "", placa: "", renavam: "", estoque_minimo: "", obs: "" };
+  const m = (v) => v === "" || v == null ? "" : Number(v).toFixed(2).replace(".", ",");
+  return dialogo(ed ? "Editar produto" : "Novo produto", `
+   <div class="lin"><label class="f">Nome *<input id="pNome" value="${esc(p.nome)}"></label><label class="f">Código (SKU)<input id="pSku" value="${esc(p.sku || "")}"></label></div>
+   <div class="lin"><label class="f">Valor de venda (R$)<input id="pVal" inputmode="decimal" value="${m(p.valor_venda)}"></label><label class="f">Custo (R$)<input id="pCusto" inputmode="decimal" value="${m(p.custo)}"></label>
+    ${ed ? `<label class="f">Estoque disponível<input value="${Number(p.quantidade).toLocaleString("pt-BR")}" disabled></label>` : `<label class="f">Quantidade inicial<input id="pQtd" inputmode="decimal" value="1"></label>`}</div>
+   <div class="lin"><label class="f">Marca<input id="pMarca" value="${esc(p.marca || "")}"></label><label class="f">Ano/modelo<input id="pAno" value="${esc(p.ano_modelo || "")}"></label><label class="f">Cor<input id="pCor" value="${esc(p.cor || "")}"></label></div>
+   <div class="lin"><label class="f">Chassi<input id="pChassi" value="${esc(p.chassi || "")}"></label><label class="f">Placa<input id="pPlaca" value="${esc(p.placa || "")}"></label><label class="f">Renavam<input id="pRenavam" value="${esc(p.renavam || "")}"></label></div>
+   <label class="f">Estoque mínimo<input id="pMin" inputmode="decimal" value="${p.estoque_minimo ?? ""}"></label>
+   <label class="f">Observações do produto<textarea id="pObs" rows="2">${esc(p.obs || "")}</textarea></label>
+   ${ed ? `<p class="sub">Para mudar a quantidade, use “Entrada no estoque” ou “Ajustar quantidade”: fica registrado no histórico.</p>` : ""}`,
+  [{ txt: "Cancelar" }, { txt: "Salvar", cls: "verde", acao: async () => {
+    const nome = $("#pNome").value.trim(); if (!nome) throw new Error("Informe o nome do produto.");
+    const dados = { nome, sku: $("#pSku").value.trim() || null, valor_venda: num($("#pVal").value), custo: num($("#pCusto").value), marca: $("#pMarca").value.trim() || null, ano_modelo: $("#pAno").value.trim() || null,
+      cor: $("#pCor").value.trim() || null, chassi: $("#pChassi").value.trim() || null, placa: $("#pPlaca").value.trim().toUpperCase() || null, renavam: $("#pRenavam").value.trim() || null,
+      estoque_minimo: $("#pMin").value ? num($("#pMin").value) : null, obs: $("#pObs").value.trim() || null, updated_at: new Date().toISOString() };
+    if (ed) { const { error } = await sb.from("fin_produtos").update(dados).eq("id", p.id); if (error) throw new Error(error.message); toast("Produto atualizado."); return true; }
+    const { data, error } = await sb.from("fin_produtos").insert({ ...dados, empresa_id: EMP, quantidade: 0, created_by: USER.id }).select("id").single(); if (error) throw new Error(error.message);
+    const q = num($("#pQtd").value); if (q > 0) { const r = await sb.rpc("fin_mov_estoque", { p_produto: data.id, p_tipo: "entrada", p_qtd: q, p_obs: "Cadastro do produto" }); if (r.error) throw new Error(r.error.message); }
+    toast("Produto cadastrado."); return true; } }]);
+}
+async function dlgMov(p, tipo) {
+  return dialogo(tipo === "entrada" ? "Entrada no estoque" : "Ajustar quantidade", `<div class="aviso">${esc(p.nome)} · disponível: ${Number(p.quantidade).toLocaleString("pt-BR")}</div>
+   <div class="lin"><label class="f">${tipo === "entrada" ? "Quantidade que entrou" : "Quantidade correta em estoque"}<input id="mQ" inputmode="decimal" value="${tipo === "entrada" ? 1 : Number(p.quantidade)}"></label><label class="f">Data<input type="date" id="mD" value="${hoje()}"></label></div>
+   <label class="f">Observação<input id="mO" placeholder="${tipo === "entrada" ? "Ex.: compra da moto, NF 123" : "Motivo do ajuste"}"></label>`,
+  [{ txt: "Cancelar" }, { txt: "Confirmar", cls: "verde", acao: async () => {
+    const { error } = await sb.rpc("fin_mov_estoque", { p_produto: p.id, p_tipo: tipo, p_qtd: num($("#mQ").value), p_obs: $("#mO").value.trim() || null, p_data: $("#mD").value || hoje() });
+    if (error) throw new Error(error.message); toast("Estoque atualizado."); return true; } }]);
+}
+async function dlgHist(p) {
+  const { data } = await sb.from("fin_estoque_mov").select("*").eq("produto_id", p.id).order("data", { ascending: false }).order("created_at", { ascending: false }).limit(200);
+  const nomes = { entrada: "Entrada", saida: "Saída", ajuste: "Ajuste", venda: "Venda", estorno: "Estorno de venda" };
+  await dialogo("Movimentações — " + p.nome, (data || []).length ? `<table><thead><tr><th>Data</th><th>Tipo</th><th class="n">Qtd.</th><th>Observação</th></tr></thead><tbody>${data.map((m) => `<tr><td>${dbr(m.data)}</td><td>${nomes[m.tipo] || m.tipo}</td><td class="n ${m.quantidade < 0 ? "verm" : "verde"}">${Number(m.quantidade).toLocaleString("pt-BR")}</td><td>${esc(m.obs || "")}</td></tr>`).join("")}</tbody></table>` : `<div class="vazio">Sem movimentações.</div>`, [{ txt: "Fechar" }]);
+}
+
+// ---------- vendas ----------
+const SV = { mes: hoje().slice(0, 7), filtro: "", busca: "" };
+let TOMADORES = null;
+async function tomadores() { if (!TOMADORES) { const { data } = await sb.rpc("fin_tomadores", { p_emp: EMP }); TOMADORES = data || []; } return TOMADORES; }
+async function telaVendas() {
+  carregando();
+  const [y, m] = SV.mes.split("-").map(Number); const ini = SV.mes + "-01", fim = iso(new Date(y, m, 0));
+  const { data: vendas, error } = await sb.from("fin_vendas").select("*").eq("empresa_id", EMP).gte("data", ini).lte("data", fim).order("data", { ascending: false }).order("numero", { ascending: false });
+  if (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
+  const notas = {}; (await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 500 })).data?.forEach((n) => notas[n.pedido_id] = n);
+  const sitTxt = { orcamento: ["Orçamento", "p-aberto"], aprovado: ["Aprovado", "p-pago"], cancelado: ["Cancelado", ""] };
+  const soma = (s) => vendas.filter((v) => !s || v.situacao === s).reduce((a, v) => a + Number(v.total), 0);
+  const cont = (s) => vendas.filter((v) => v.situacao === s).length;
+  let vis = vendas.filter((v) => !SV.filtro || v.situacao === SV.filtro);
+  if (SV.busca) { const b = SV.busca.toLowerCase(); vis = vis.filter((v) => (v.numero + " " + pesNome(v.pessoa_id) + " " + (v.banco_nome || "")).toLowerCase().includes(b)); }
+  const card = (k, rot, cls) => `<button type="button" data-f="${k}" aria-pressed="${SV.filtro === k}"><small>${rot}</small><b class="${cls}">${brl(soma(k))}</b></button>`;
+  $("#main").innerHTML = `<h1>Vendas</h1>
+   <div class="barra"><div class="periodo"><button type="button" id="vAnt" aria-label="Mês anterior">‹</button><span>${MESES[m - 1]} de ${y}</span><button type="button" id="vProx" aria-label="Próximo mês">›</button></div>
+    <input type="search" id="vBusca" placeholder="Pesquisar no período" value="${esc(SV.busca)}"><span style="margin-left:auto"></span>
+    <button class="btn" type="button" id="vOrc">Novo orçamento</button><button class="btn azul" type="button" id="vNova">+ Nova venda</button></div>
+   <div class="cards">${card("cancelado", `Cancelados (${cont("cancelado")})`, "")}${card("orcamento", `Orçamentos (${cont("orcamento")})`, "azul")}${card("aprovado", `Aprovados (${cont("aprovado")})`, "verde")}${card("", "Total do período", "")}</div>
+   <div class="tab">${vis.length ? `<table><thead><tr><th>Data da venda</th><th>Número</th><th>Cliente</th><th class="n">Valor (R$)</th><th>Situação</th><th>Nota fiscal de serviço</th><th>Ações</th></tr></thead><tbody>
+    ${vis.map((v) => { const n = v.pedido_id ? notas[v.pedido_id] : null; return `<tr><td>${dbr(v.data)}</td><td>${v.numero}</td><td>${esc(pesNome(v.pessoa_id))}${v.financiada ? `<div><span class="tag">Financiada · ${esc(v.banco_nome || "")}</span></div>` : ""}</td>
+      <td class="n">${brl(v.total)}</td><td><span class="pill ${sitTxt[v.situacao][1]}">${sitTxt[v.situacao][0]}</span></td>
+      <td>${v.financiada ? (n ? statusNota(n) : `<span class="sub">Não solicitada</span>`) : `<span class="sub">—</span>`}</td>
+      <td><select class="vAcao" data-id="${v.id}" aria-label="Ações"><option value="">Ações</option><option value="ver">Ver detalhes</option>
+        ${v.situacao === "orcamento" ? `<option value="aprovar">Aprovar (virar venda)</option>` : ""}
+        ${v.financiada && v.situacao === "aprovado" && (!n || ["rejeitado", "erro"].includes(n.status)) ? `<option value="nfse">Solicitar NFS-e da comissão</option>` : ""}
+        <option value="clonar">Clonar</option>${v.situacao !== "cancelado" ? `<option value="cancelar">Cancelar venda</option>` : ""}</select></td></tr>`; }).join("")}
+   </tbody></table>` : `<div class="vazio">Nenhuma venda neste período.</div>`}</div>`;
+  $("#vAnt").onclick = () => { SV.mes = addMes(SV.mes + "-01", -1).slice(0, 7); telaVendas(); };
+  $("#vProx").onclick = () => { SV.mes = addMes(SV.mes + "-01", 1).slice(0, 7); telaVendas(); };
+  $("#vBusca").onchange = (e) => { SV.busca = e.target.value; telaVendas(); };
+  $("#vNova").onclick = async () => { if (await dlgVenda()) telaVendas(); };
+  $("#vOrc").onclick = async () => { if (await dlgVenda(null, "orcamento")) telaVendas(); };
+  document.querySelectorAll(".cards button").forEach((b) => b.onclick = () => { SV.filtro = SV.filtro === b.dataset.f ? "" : b.dataset.f; telaVendas(); });
+  document.querySelectorAll(".vAcao").forEach((s) => s.onchange = async () => {
+    const v = vendas.find((x) => x.id === s.dataset.id), a = s.value; s.value = ""; let ok = false;
+    if (a === "ver") await dlgVerVenda(v);
+    if (a === "clonar") ok = await dlgVenda(v);
+    if (a === "aprovar") ok = await dlgVenda(v, "aprovar");
+    if (a === "nfse") ok = await dlgSolicitarNfse(v);
+    if (a === "cancelar") ok = await dialogo("Cancelar venda", `<p>Cancelar a venda nº ${v.numero}? As parcelas em aberto são canceladas e as motos voltam para o estoque.</p>`,
+      [{ txt: "Voltar" }, { txt: "Cancelar venda", cls: "verm", acao: async () => { const { error } = await sb.rpc("fin_cancelar_venda", { p_venda: v.id }); if (error) throw new Error(error.message); toast("Venda cancelada."); return true; } }]);
+    if (ok) telaVendas();
+  });
+}
+function statusNota(n) {
+  const mapa = { recebido: ["Solicitada", "p-aberto"], em_analise: ["Em análise", "p-aberto"], aguardando_aprovacao: ["Em conferência na CONTEF", "p-aberto"], precisa_humano: ["Em conferência na CONTEF", "p-aberto"], aprovado: ["Emitindo", "p-aberto"], emitindo: ["Emitindo", "p-aberto"], emitido: ["Emitida", "p-pago"], rejeitado: ["Recusada", "p-vencido"], erro: ["Com erro", "p-vencido"] };
+  const [t, c] = mapa[n.status] || [n.status, ""];
+  return `<span class="pill ${c}">${t}</span>${n.numero_nfse ? `<div class="sub">NFS-e ${esc(n.numero_nfse)}</div>` : ""}`;
+}
+async function dlgVenda(base, modo) {
+  await carregarProdutos(); const toms = await tomadores();
+  const orc = modo === "orcamento" || (base && base.situacao === "orcamento" && modo !== "aprovar" && !modo);
+  let itens = [];
+  if (base) { const { data } = await sb.from("fin_venda_itens").select("*").eq("venda_id", base.id); itens = (data || []).map((i) => ({ produto_id: i.produto_id, descricao: i.descricao, quantidade: Number(i.quantidade), valor_unit: Number(i.valor_unit) })); }
+  if (!itens.length) itens = [{ produto_id: "", descricao: "", quantidade: 1, valor_unit: 0 }];
+  const b = base || {};
+  const formas = { "": "Selecione", pix: "PIX", dinheiro: "Dinheiro", debito: "Cartão de débito", credito: "Cartão de crédito", boleto: "Boleto", transferencia: "Transferência", financiamento: "Financiamento bancário", outro: "Outro" };
+  const optProd = (sel) => `<option value="">Selecione ou digite abaixo</option>` + PRODUTOS.filter((p) => p.ativo || p.id === sel).map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.nome)} — ${brl(p.valor_venda)} (estoque ${Number(p.quantidade).toLocaleString("pt-BR")})</option>`).join("");
+  const linha = (it, i) => `<div class="lin itemV" data-i="${i}" style="grid-template-columns:minmax(0,2.2fr) 80px 130px 110px 36px;align-items:end">
+     <label class="f">Produto<select class="iProd">${optProd(it.produto_id)}</select><input class="iDesc" placeholder="Descrição (se não for do estoque)" value="${esc(it.produto_id ? "" : it.descricao)}" style="margin-top:4px"></label>
+     <label class="f">Qtd.<input class="iQtd" inputmode="decimal" value="${it.quantidade}"></label>
+     <label class="f">Valor unitário<input class="iVal" inputmode="decimal" value="${Number(it.valor_unit).toFixed(2).replace(".", ",")}"></label>
+     <label class="f">Total<input class="iTot" disabled></label><button type="button" class="btn min iDel" aria-label="Remover item">✕</button></div>`;
+  const pr = dialogo(orc ? "Novo orçamento" : (modo === "aprovar" ? "Aprovar orçamento nº " + b.numero : "Nova venda"), `
+   <div class="lin"><label class="f">Situação da negociação<select id="vSit"><option value="aprovado" ${!orc ? "selected" : ""}>Aprovado (venda)</option><option value="orcamento" ${orc ? "selected" : ""}>Orçamento</option></select></label>
+    <label class="f">Data da venda *<input type="date" id="vData" value="${modo === "aprovar" ? esc(b.data) : hoje()}"></label>
+    <label class="f">Vendedor responsável<input id="vVend" value="${esc(b.vendedor || "")}"></label></div>
+   <div class="lin"><label class="f">Cliente *<input id="vCli" list="lCli" value="${esc(pesNome(b.pessoa_id))}" placeholder="Nome do cliente"><datalist id="lCli">${PESSOAS.filter((p) => p.tipo !== "fornecedor").map((p) => `<option value="${esc(p.nome)}">`).join("")}</datalist></label>
+    <label class="f">CPF/CNPJ do cliente<input id="vDoc" inputmode="numeric"></label>
+    <label class="f">Categoria financeira<select id="vCat">${optsCat("receita", b.categoria || "3.01.02")}</select></label></div>
+   <h3 style="margin:6px 0 0;font-size:14px">Itens</h3><div id="vItens">${itens.map(linha).join("")}</div>
+   <div><button type="button" class="btn min" id="vAddItem">+ Adicionar item</button></div>
+   <div class="lin"><label class="f">Desconto (R$)<input id="vDesc" inputmode="decimal" value="${Number(b.desconto || 0).toFixed(2).replace(".", ",")}"></label>
+    <div class="box" style="padding:8px 12px"><div class="sub">Total da venda</div><div class="kpi" id="vTotal">R$ 0,00</div></div></div>
+   <h3 style="margin:6px 0 0;font-size:14px">Informações de pagamento</h3>
+   <label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="vFin" ${b.financiada ? "checked" : ""}> Venda financiada (banco paga o financiamento e a loja recebe comissão)</label>
+   <div id="vFinBox" class="box" style="display:none;gap:10px">
+    <div class="lin"><label class="f">Banco *<select id="vBanco"><option value="">Selecione</option>${toms.map((t) => `<option value="${esc(t.documento)}" ${t.documento === b.banco_documento ? "selected" : ""}>${esc(t.nome)}</option>`).join("")}<option value="outro">Outro banco</option></select></label>
+     <label class="f" id="vBancoOutroL" style="display:none">Nome do banco<input id="vBancoNome"></label><label class="f" id="vBancoDocL" style="display:none">CNPJ do banco<input id="vBancoDoc" inputmode="numeric"></label></div>
+    <div class="lin"><label class="f">Entrada paga pelo cliente (R$)<input id="vEnt" inputmode="decimal" value="${Number(b.valor_entrada || 0).toFixed(2).replace(".", ",")}"></label>
+     <label class="f">Valor financiado (R$)<input id="vFinVal" disabled></label>
+     <label class="f">Comissão do banco (R$)<input id="vCom" inputmode="decimal" value="${b.comissao_valor ? Number(b.comissao_valor).toFixed(2).replace(".", ",") : ""}"></label>
+     <label class="f">Mês de referência<input id="vComp" placeholder="Ex.: 11/2026" value="${esc(b.comissao_competencia || hoje().slice(5, 7) + "/" + hoje().slice(0, 4))}"></label></div>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="vNfse" checked> Solicitar à CONTEF a NFS-e da comissão</label>
+    <p class="sub">A solicitação cai no monitor de notas da CONTEF. Depois de emitida, a nota e o XML aparecem em “Notas fiscais de serviço”.</p></div>
+   <div class="lin"><label class="f" id="vFormaL">Forma de pagamento<select id="vForma">${Object.entries(formas).map(([k, v]) => `<option value="${k}" ${k === (b.forma_pagamento || "") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+    <label class="f">Conta de recebimento<select id="vConta">${optsConta(b.conta_id || "")}</select></label>
+    <label class="f">Condição de pagamento<select id="vParc"><option value="1">À vista</option>${[2, 3, 4, 5, 6, 10, 12, 18, 24].map((n) => `<option value="${n}" ${n === b.parcelas ? "selected" : ""}>${n}x</option>`).join("")}</select></label>
+    <label class="f">Vencimento<input type="date" id="vVenc" value="${hoje()}"></label></div>
+   <label class="f">Observações de pagamento<textarea id="vObsP" rows="2">${esc(b.obs_pagamento || "")}</textarea></label>
+   <label class="f">Observações complementares da nota fiscal<textarea id="vObsN" rows="2">${esc(b.obs_nota || "")}</textarea></label>`,
+  [{ txt: "Cancelar" }, { txt: "Salvar", cls: "verde", acao: async () => {
+    const its = [...document.querySelectorAll(".itemV")].map((r) => { const pid = r.querySelector(".iProd").value; const p = PRODUTOS.find((x) => x.id === pid);
+      return { produto_id: pid || null, descricao: p ? p.nome : r.querySelector(".iDesc").value.trim(), quantidade: num(r.querySelector(".iQtd").value) || 1, valor_unit: num(r.querySelector(".iVal").value) }; }).filter((i) => i.produto_id || i.descricao);
+    if (!its.length) throw new Error("Inclua pelo menos um item.");
+    for (const i of its) if (i.produto_id) { const p = PRODUTOS.find((x) => x.id === i.produto_id); if ($("#vSit").value === "aprovado" && Number(p.quantidade) < i.quantidade) throw new Error(`Sem estoque suficiente de ${p.nome} (disponível: ${Number(p.quantidade)}).`); }
+    const cli = $("#vCli").value.trim(); if (!cli) throw new Error("Informe o cliente.");
+    const fin = $("#vFin").checked; let bancoNome = null, bancoDoc = null;
+    if (fin) { const sel = $("#vBanco").value; if (!sel) throw new Error("Selecione o banco do financiamento.");
+      if (sel === "outro") { bancoNome = $("#vBancoNome").value.trim(); bancoDoc = $("#vBancoDoc").value.replace(/\D/g, ""); if (!bancoNome) throw new Error("Informe o nome do banco."); }
+      else { bancoDoc = sel; bancoNome = toms.find((t) => t.documento === sel).nome; } }
+    const pes = PESSOAS.find((p) => p.nome.toLowerCase() === cli.toLowerCase());
+    const payload = { empresa_id: EMP, data: $("#vData").value || hoje(), situacao: $("#vSit").value, pessoa_id: pes ? pes.id : null, cliente_nome: cli, cliente_documento: $("#vDoc").value.replace(/\D/g, "") || null,
+      categoria: $("#vCat").value || "3.01.02", vendedor: $("#vVend").value.trim() || null, desconto: num($("#vDesc").value), itens: its,
+      forma_pagamento: fin && !num($("#vEnt").value) ? "financiamento" : ($("#vForma").value || null), conta_id: $("#vConta").value || null, parcelas: Number($("#vParc").value), primeiro_vencimento: $("#vVenc").value || hoje(),
+      obs_pagamento: $("#vObsP").value.trim() || null, obs_nota: $("#vObsN").value.trim() || null,
+      financiada: fin, banco_nome: bancoNome, banco_documento: bancoDoc, valor_entrada: fin ? num($("#vEnt").value) : 0,
+      comissao_valor: fin && $("#vCom").value ? num($("#vCom").value) : null, comissao_competencia: fin ? $("#vComp").value.trim() : null, solicitar_nfse: fin && $("#vNfse").checked && $("#vSit").value === "aprovado" };
+    if (payload.solicitar_nfse && !(payload.comissao_valor > 0)) throw new Error("Informe o valor da comissão para solicitar a NFS-e (ou desmarque a solicitação).");
+    const { error } = await sb.rpc("fin_salvar_venda", { p: payload }); if (error) throw new Error(error.message);
+    if (modo === "aprovar" && base) await sb.rpc("fin_cancelar_venda", { p_venda: base.id });
+    PESSOAS = (await sb.from("fin_pessoas").select("id,nome,tipo").eq("empresa_id", EMP).order("nome")).data || PESSOAS;
+    toast(payload.situacao === "orcamento" ? "Orçamento salvo." : (payload.solicitar_nfse ? "Venda salva e NFS-e da comissão solicitada." : "Venda salva.")); return true; } }]);
+  // comportamento do formulário
+  const recalc = () => { let t = 0; document.querySelectorAll(".itemV").forEach((r) => { const v = (num(r.querySelector(".iQtd").value) || 0) * num(r.querySelector(".iVal").value); r.querySelector(".iTot").value = brl(v); t += v; });
+    t -= num($("#vDesc").value); $("#vTotal").textContent = brl(t); $("#vFinVal").value = brl(Math.max(t - num($("#vEnt").value), 0)); };
+  const ligar = () => document.querySelectorAll(".itemV").forEach((r) => {
+    r.querySelector(".iProd").onchange = (e) => { const p = PRODUTOS.find((x) => x.id === e.target.value); if (p) r.querySelector(".iVal").value = Number(p.valor_venda).toFixed(2).replace(".", ","); recalc(); };
+    r.querySelectorAll("input").forEach((i) => i.oninput = recalc);
+    r.querySelector(".iDel").onclick = () => { if (document.querySelectorAll(".itemV").length > 1) { r.remove(); recalc(); } };
+  });
+  $("#vAddItem").onclick = () => { $("#vItens").insertAdjacentHTML("beforeend", linha({ produto_id: "", descricao: "", quantidade: 1, valor_unit: 0 }, Date.now())); ligar(); recalc(); };
+  const finUi = () => { const on = $("#vFin").checked; $("#vFinBox").style.display = on ? "grid" : "none"; const o = $("#vBanco").value === "outro"; $("#vBancoOutroL").style.display = $("#vBancoDocL").style.display = o ? "grid" : "none"; };
+  $("#vFin").onchange = finUi; $("#vBanco").onchange = finUi; $("#vDesc").oninput = recalc; $("#vEnt").oninput = recalc;
+  $("#vCli").onchange = () => { };
+  ligar(); recalc(); finUi();
+  return pr;
+}
+async function dlgVerVenda(v) {
+  const { data: its } = await sb.from("fin_venda_itens").select("*").eq("venda_id", v.id);
+  const { data: tits } = await sb.from("fin_titulos").select("descricao,valor,vencimento,status").eq("venda_id", v.id).order("vencimento");
+  await dialogo("Venda nº " + v.numero, `
+   <div class="lin"><div><div class="sub">Cliente</div><b>${esc(pesNome(v.pessoa_id))}</b></div><div><div class="sub">Data</div><b>${dbr(v.data)}</b></div><div><div class="sub">Total</div><b>${brl(v.total)}</b></div></div>
+   <table><thead><tr><th>Item</th><th class="n">Qtd.</th><th class="n">Unitário</th><th class="n">Total</th></tr></thead><tbody>${(its || []).map((i) => `<tr><td>${esc(i.descricao)}</td><td class="n">${Number(i.quantidade)}</td><td class="n">${brl(i.valor_unit)}</td><td class="n">${brl(i.total)}</td></tr>`).join("")}</tbody></table>
+   ${Number(v.desconto) ? `<div class="sub">Desconto: ${brl(v.desconto)}</div>` : ""}
+   ${v.financiada ? `<div class="aviso">Financiada pelo ${esc(v.banco_nome)} · entrada ${brl(v.valor_entrada)} · financiado ${brl(v.valor_financiado)}${v.comissao_valor ? " · comissão " + brl(v.comissao_valor) + " (ref. " + esc(v.comissao_competencia || "") + ")" : ""}</div>` : ""}
+   <h3 style="margin:6px 0 0;font-size:14px">Parcelas geradas</h3>
+   ${(tits || []).length ? `<table><tbody>${tits.map((t) => `<tr><td>${esc(t.descricao)}</td><td>${dbr(t.vencimento)}</td><td class="n">${brl(t.valor)}</td><td>${t.status === "pago" ? "Recebido" : t.status === "cancelado" ? "Cancelado" : "Em aberto"}</td></tr>`).join("")}</tbody></table>` : `<div class="sub">Nenhuma (orçamento).</div>`}
+   ${v.obs_pagamento ? `<div><div class="sub">Observações de pagamento</div>${esc(v.obs_pagamento)}</div>` : ""}${v.obs_nota ? `<div><div class="sub">Observações da nota</div>${esc(v.obs_nota)}</div>` : ""}`, [{ txt: "Fechar" }]);
+}
+async function dlgSolicitarNfse(v) {
+  return dialogo("Solicitar NFS-e da comissão", `<div class="aviso">Venda nº ${v.numero} · ${esc(v.banco_nome)}</div>
+   <div class="lin"><label class="f">Valor da comissão (R$)<input id="nVal" inputmode="decimal" value="${v.comissao_valor ? Number(v.comissao_valor).toFixed(2).replace(".", ",") : ""}"></label>
+    <label class="f">Mês de referência<input id="nComp" value="${esc(v.comissao_competencia || hoje().slice(5, 7) + "/" + hoje().slice(0, 4))}"></label></div>
+   <label class="f">Observação para a CONTEF<input id="nObs"></label>`,
+  [{ txt: "Cancelar" }, { txt: "Solicitar", cls: "verde", acao: async () => {
+    const { error } = await sb.rpc("fin_solicitar_nfse_comissao", { p_venda: v.id, p_valor: num($("#nVal").value), p_competencia: $("#nComp").value.trim(), p_obs: $("#nObs").value.trim() || null });
+    if (error) throw new Error(error.message); toast("Solicitação enviada para a CONTEF."); return true; } }]);
+}
+
+// ---------- notas fiscais de serviço ----------
+async function telaNotas() {
+  carregando();
+  const { data, error } = await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 300 });
+  if (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
+  $("#main").innerHTML = `<h1>Notas fiscais de serviço</h1>
+   <div class="barra"><span class="sub">As notas são emitidas pela CONTEF. Quando a nota sai, o XML e o PDF ficam disponíveis aqui.</span><span style="margin-left:auto"></span><button class="btn azul" id="nNova" type="button">+ Solicitar NFS-e de comissão</button></div>
+   <div class="tab">${(data || []).length ? `<table><thead><tr><th>Solicitada em</th><th>Descrição</th><th>Situação</th><th>Número</th><th>Arquivos</th></tr></thead><tbody>
+    ${data.map((n) => `<tr><td>${new Date(n.criado_em).toLocaleDateString("pt-BR")}</td><td>${esc(n.resumo || "")}${n.venda_numero ? `<div class="sub">Venda nº ${n.venda_numero}</div>` : ""}</td><td>${statusNota(n)}</td><td>${esc(n.numero_nfse || "")}</td>
+     <td>${n.tem_xml ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="xml" type="button">XML</button>` : ""} ${n.tem_pdf ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="pdf" type="button">PDF</button>` : ""}${!n.tem_xml && !n.tem_pdf ? `<span class="sub">—</span>` : ""}</td></tr>`).join("")}
+   </tbody></table>` : `<div class="vazio">Nenhuma nota solicitada ainda.</div>`}</div>`;
+  $("#nNova").onclick = async () => { if (await dlgNfseAvulsa()) telaNotas(); };
+  document.querySelectorAll(".bArq").forEach((b) => b.onclick = async () => {
+    const { data: conteudo, error: er } = await sb.rpc("fin_nota_arquivo", { p_emp: EMP, p_pedido: b.dataset.id, p_tipo: b.dataset.t });
+    if (er || !conteudo) return toast("Arquivo indisponível no momento.", "warn");
+    const n = data.find((x) => x.pedido_id === b.dataset.id); const nome = "NFS-e " + (n.numero_nfse || n.pedido_id.slice(0, 8)) + "." + b.dataset.t;
+    let blob; if (b.dataset.t === "pdf") { const bin = atob(conteudo); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); blob = new Blob([u], { type: "application/pdf" }); }
+    else blob = new Blob([conteudo], { type: "application/xml" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  });
+}
+async function dlgNfseAvulsa() {
+  const toms = await tomadores();
+  setTimeout(() => { const b = $("#aBanco"); if (b) b.onchange = () => { const o = b.value === "outro"; $("#aOutroL").style.display = $("#aDocL").style.display = o ? "grid" : "none"; }; }, 0);
+  return dialogo("Solicitar NFS-e de comissão", `
+   <div class="lin"><label class="f">Banco (tomador)<select id="aBanco"><option value="">Selecione</option>${toms.map((t) => `<option value="${esc(t.documento)}">${esc(t.nome)}</option>`).join("")}<option value="outro">Outro</option></select></label>
+    <label class="f" id="aOutroL" style="display:none">Nome do banco<input id="aNome"></label><label class="f" id="aDocL" style="display:none">CNPJ<input id="aDoc" inputmode="numeric"></label></div>
+   <div class="lin"><label class="f">Valor (R$)<input id="aVal" inputmode="decimal"></label><label class="f">Mês de referência<input id="aComp" value="${hoje().slice(5, 7)}/${hoje().slice(0, 4)}"></label></div>
+   <label class="f">Observação para a CONTEF<input id="aObs" placeholder="Ex.: comissões do mês, contratos 123 e 456"></label>`,
+  [{ txt: "Cancelar" }, { txt: "Solicitar", cls: "verde", acao: async () => {
+    const sel = $("#aBanco").value; if (!sel) throw new Error("Selecione o banco.");
+    const nome = sel === "outro" ? $("#aNome").value.trim() : toms.find((t) => t.documento === sel).nome, doc = sel === "outro" ? $("#aDoc").value.replace(/\D/g, "") : sel;
+    const { error } = await sb.rpc("fin_solicitar_nfse_avulsa", { p_emp: EMP, p_tomador: nome, p_documento: doc, p_valor: num($("#aVal").value), p_competencia: $("#aComp").value.trim(), p_obs: $("#aObs").value.trim() || null });
+    if (error) throw new Error(error.message); toast("Solicitação enviada para a CONTEF."); return true; } }]);
 }
 
 // ---------- início da sessão ----------
