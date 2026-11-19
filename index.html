@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer">
-<title>Financeiro — RR Motos | CONTEF</title>
+<title>Financeiro | CONTEF</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 :root{--navy:#00065A;--side:#0A1478;--laranja:#FF9700;--azul:#1B6FE0;--bg:#EEF1F7;--line:#D9DEEA;--fg:#1C2240;--muted:#69708F;--s2:#F5F7FB;
 --ok:#1E8E3E;--ok-bg:#E3F4E8;--bad:#D93025;--bad-bg:#FCE8E6;--warn-bg:#FFF2DA;--info:#1B6FE0;--info-bg:#E5EEFC;--f:"Nunito Sans","Segoe UI",system-ui,sans-serif;color-scheme:light}
-*{box-sizing:border-box}html,body{height:100%}
+*{box-sizing:border-box}html,body,#raiz{height:100%}
 body{margin:0;font:14px/1.45 var(--f);background:var(--bg);color:var(--fg)}
 button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer}
 :focus-visible{outline:2px solid var(--laranja);outline-offset:2px}
@@ -96,7 +96,7 @@ const addMes = (isoD, n) => { const [y, m, d] = isoD.split("-").map(Number); con
 
 function toast(msg, tipo) { const t = document.createElement("div"); t.className = "toast" + (tipo === "warn" ? " warn" : ""); t.setAttribute("role", "status"); t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3500); }
 
-let USER = null, EMP = null, EMP_NOME = "", CATS = [], CONTAS = [], PESSOAS = [];
+let USER = null, EMP = null, EMP_NOME = "", CATS = [], CONTAS = [], PESSOAS = [], CFG = { estoque: false, financiada: false, tipo_venda: "servico" };
 
 // ---------- diálogo ----------
 function dialogo(titulo, corpo, botoes) {
@@ -146,11 +146,11 @@ async function iniciar(session) {
   if (error || !ac?.length) { await sb.auth.signOut(); return telaLogin("Seu usuário ainda não tem empresa liberada. Fale com a CONTEF.", "warn"); }
   EMP = ac[0].empresa_id;
   const [e, c, k, p] = await Promise.all([
-    sb.from("fin_empresas").select("nome").eq("id", EMP).single(),
+    sb.from("fin_empresas").select("nome,settings").eq("id", EMP).single(),
     sb.from("fin_categorias").select("codigo,nome,natureza,lancavel,ativa,empresa_id").order("codigo"),
     sb.from("fin_contas").select("id,nome,saldo_inicial,ativo").eq("empresa_id", EMP).order("nome"),
-    sb.from("fin_pessoas").select("id,nome,tipo").eq("empresa_id", EMP).order("nome")]);
-  EMP_NOME = e.data?.nome || ""; CONTAS = (c.data && k.data) ? k.data : []; PESSOAS = p.data || [];
+    sb.from("fin_pessoas").select("id,nome,tipo,documento").eq("empresa_id", EMP).order("nome")]);
+  EMP_NOME = e.data?.nome || ""; CFG = Object.assign(CFG, e.data?.settings?.painel || {}); document.title = "Financeiro — " + EMP_NOME + " | CONTEF"; CONTAS = (c.data && k.data) ? k.data : []; PESSOAS = p.data || [];
   const cats = c.data || []; const porCod = {}; cats.forEach((x) => { if (!porCod[x.codigo] || x.empresa_id) porCod[x.codigo] = x; }); CATS = Object.values(porCod);
   montarApp();
   if (USER.user_metadata?.trocar_senha) trocarSenha("Crie sua senha de acesso");
@@ -169,16 +169,15 @@ function montarApp() {
     <div class="logo"><span class="moeda">$</span>CONTEF <small>${esc(EMP_NOME)}</small></div>
     <div class="esp"></div>
     <div class="novo"><button class="btn azul" id="bNovo" aria-haspopup="true">+ Novo registro</button>
-      <div class="menu" id="mNovo"><button type="button" data-v="1">Nova venda</button><button type="button" data-n="receber">Nova receita</button><button type="button" data-n="pagar">Nova despesa</button><button type="button" data-p="1">Novo produto</button></div></div>
+      <div class="menu" id="mNovo"><button type="button" data-v="1">Nova venda</button><button type="button" data-n="receber">Nova receita</button><button type="button" data-n="pagar">Nova despesa</button>${CFG.estoque ? `<button type="button" data-p="1">Novo produto</button>` : ""}</div></div>
     <div class="quem">${esc(USER.email)}<br><button class="link" id="bSenha">Trocar senha</button></div>
     <button class="btn" id="bSair">Sair</button></header>
    <nav class="side" id="side" aria-label="Menu">
     <a href="#inicio" data-r="inicio">Início</a>
     <div class="sec">Vendas</div>
-    <a href="#vendas" data-r="vendas">Vendas</a>
+    <a href="#vendas" data-r="vendas">${CFG.tipo_venda === "servico" ? "Vendas de serviços" : "Vendas"}</a>
     <a href="#notas" data-r="notas">Notas fiscais de serviço</a>
-    <div class="sec">Estoque</div>
-    <a href="#estoque" data-r="estoque">Produtos</a>
+    ${CFG.estoque ? `<div class="sec">Estoque</div><a href="#estoque" data-r="estoque">Produtos</a>` : ""}
     <div class="sec">Financeiro</div>
     <a href="#receber" data-r="receber">Contas a receber</a>
     <a href="#pagar" data-r="pagar">Contas a pagar</a>
@@ -195,7 +194,7 @@ function montarApp() {
   window.onhashchange = rota; rota();
 }
 function rota() {
-  const r = (location.hash || "#inicio").slice(1); const R = ROTAS[r] ? r : "inicio";
+  const r = (location.hash || "#inicio").slice(1); const R = ROTAS[r] && (r !== "estoque" || CFG.estoque) ? r : "inicio";
   document.querySelectorAll(".side a").forEach((a) => a.dataset.r === R ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   $("#side").classList.remove("aberta");
   ({ inicio: telaInicio, vendas: telaVendas, notas: telaNotas, estoque: telaEstoque, receber: () => telaTitulos("receber"), pagar: () => telaTitulos("pagar"), extrato: telaExtrato })[R]();
@@ -294,7 +293,7 @@ async function telaTitulos(tipo) {
 async function garantirPessoa(nome, tipo) {
   nome = nome.trim(); if (!nome) return null;
   const ach = PESSOAS.find((p) => p.nome.toLowerCase() === nome.toLowerCase()); if (ach) return ach.id;
-  const { data, error } = await sb.from("fin_pessoas").insert({ empresa_id: EMP, nome, tipo: tipo === "receber" ? "cliente" : "fornecedor" }).select("id,nome,tipo").single();
+  const { data, error } = await sb.from("fin_pessoas").insert({ empresa_id: EMP, nome, tipo: tipo === "receber" ? "cliente" : "fornecedor" }).select("id,nome,tipo,documento").single();
   if (error) throw new Error("Não foi possível cadastrar " + nome + ": " + error.message);
   PESSOAS.push(data); return data.id;
 }
@@ -489,10 +488,10 @@ async function telaVendas() {
    <div class="tab">${vis.length ? `<table><thead><tr><th>Data da venda</th><th>Número</th><th>Cliente</th><th class="n">Valor (R$)</th><th>Situação</th><th>Nota fiscal de serviço</th><th>Ações</th></tr></thead><tbody>
     ${vis.map((v) => { const n = v.pedido_id ? notas[v.pedido_id] : null; return `<tr><td>${dbr(v.data)}</td><td>${v.numero}</td><td>${esc(pesNome(v.pessoa_id))}${v.financiada ? `<div><span class="tag">Financiada · ${esc(v.banco_nome || "")}</span></div>` : ""}</td>
       <td class="n">${brl(v.total)}</td><td><span class="pill ${sitTxt[v.situacao][1]}">${sitTxt[v.situacao][0]}</span></td>
-      <td>${v.financiada ? (n ? statusNota(n) : `<span class="sub">Não solicitada</span>`) : `<span class="sub">—</span>`}</td>
+      <td>${v.financiada || !CFG.estoque ? (n ? statusNota(n) : `<span class="sub">Não solicitada</span>`) : `<span class="sub">—</span>`}</td>
       <td><select class="vAcao" data-id="${v.id}" aria-label="Ações"><option value="">Ações</option><option value="ver">Ver detalhes</option>
         ${v.situacao === "orcamento" ? `<option value="aprovar">Aprovar (virar venda)</option>` : ""}
-        ${v.financiada && v.situacao === "aprovado" && (!n || ["rejeitado", "erro"].includes(n.status)) ? `<option value="nfse">Solicitar NFS-e da comissão</option>` : ""}
+        ${(v.financiada || !CFG.estoque) && v.situacao === "aprovado" && (!n || ["rejeitado", "erro"].includes(n.status)) ? `<option value="nfse">${v.financiada ? "Solicitar NFS-e da comissão" : "Solicitar NFS-e"}</option>` : ""}
         <option value="clonar">Clonar</option>${v.situacao !== "cancelado" ? `<option value="cancelar">Cancelar venda</option>` : ""}</select></td></tr>`; }).join("")}
    </tbody></table>` : `<div class="vazio">Nenhuma venda neste período.</div>`}</div>`;
   $("#vAnt").onclick = () => { SV.mes = addMes(SV.mes + "-01", -1).slice(0, 7); telaVendas(); };
@@ -506,7 +505,8 @@ async function telaVendas() {
     if (a === "ver") await dlgVerVenda(v);
     if (a === "clonar") ok = await dlgVenda(v);
     if (a === "aprovar") ok = await dlgVenda(v, "aprovar");
-    if (a === "nfse") ok = await dlgSolicitarNfse(v);
+    if (a === "nfse") ok = v.financiada ? await dlgSolicitarNfse(v) : await dialogo("Solicitar NFS-e", `<p>Pedir à CONTEF a NFS-e da venda nº ${v.numero} (${brl(v.total)}) para ${esc(pesNome(v.pessoa_id))}?</p><label class="f">Observação para a CONTEF<input id="nObs2"></label>`,
+      [{ txt: "Cancelar" }, { txt: "Solicitar", cls: "verde", acao: async () => { const { error } = await sb.rpc("fin_solicitar_nfse_venda", { p_venda: v.id, p_obs: $("#nObs2").value.trim() || null }); if (error) throw new Error(error.message); toast("Solicitação enviada para a CONTEF."); return true; } }]);
     if (a === "cancelar") ok = await dialogo("Cancelar venda", `<p>Cancelar a venda nº ${v.numero}? As parcelas em aberto são canceladas e as motos voltam para o estoque.</p>`,
       [{ txt: "Voltar" }, { txt: "Cancelar venda", cls: "verm", acao: async () => { const { error } = await sb.rpc("fin_cancelar_venda", { p_venda: v.id }); if (error) throw new Error(error.message); toast("Venda cancelada."); return true; } }]);
     if (ok) telaVendas();
@@ -518,7 +518,7 @@ function statusNota(n) {
   return `<span class="pill ${c}">${t}</span>${n.numero_nfse ? `<div class="sub">NFS-e ${esc(n.numero_nfse)}</div>` : ""}`;
 }
 async function dlgVenda(base, modo) {
-  await carregarProdutos(); const toms = await tomadores();
+  await carregarProdutos(); const toms = CFG.financiada ? await tomadores() : []; const servs = CFG.estoque ? [] : ((await sb.rpc("fin_servicos", { p_emp: EMP })).data || []);
   const orc = modo === "orcamento" || (base && base.situacao === "orcamento" && modo !== "aprovar" && !modo);
   let itens = [];
   if (base) { const { data } = await sb.from("fin_venda_itens").select("*").eq("venda_id", base.id); itens = (data || []).map((i) => ({ produto_id: i.produto_id, descricao: i.descricao, quantidade: Number(i.quantidade), valor_unit: Number(i.valor_unit) })); }
@@ -527,7 +527,8 @@ async function dlgVenda(base, modo) {
   const formas = { "": "Selecione", pix: "PIX", dinheiro: "Dinheiro", debito: "Cartão de débito", credito: "Cartão de crédito", boleto: "Boleto", transferencia: "Transferência", financiamento: "Financiamento bancário", outro: "Outro" };
   const optProd = (sel) => `<option value="">Selecione ou digite abaixo</option>` + PRODUTOS.filter((p) => p.ativo || p.id === sel).map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.nome)} — ${brl(p.valor_venda)} (estoque ${Number(p.quantidade).toLocaleString("pt-BR")})</option>`).join("");
   const linha = (it, i) => `<div class="lin itemV" data-i="${i}" style="grid-template-columns:minmax(0,2.2fr) 80px 130px 110px 36px;align-items:end">
-     <label class="f">Produto<select class="iProd">${optProd(it.produto_id)}</select><input class="iDesc" placeholder="Descrição (se não for do estoque)" value="${esc(it.produto_id ? "" : it.descricao)}" style="margin-top:4px"></label>
+     ${CFG.estoque ? `<label class="f">Produto<select class="iProd">${optProd(it.produto_id)}</select><input class="iDesc" placeholder="Descrição (se não for do estoque)" value="${esc(it.produto_id ? "" : it.descricao)}" style="margin-top:4px"></label>`
+       : `<label class="f">Serviço<input class="iDesc" list="lServ" placeholder="Descreva o serviço (ex.: consulta, sessão de fisioterapia)" value="${esc(it.descricao)}"><select class="iProd" hidden><option value=""></option></select></label>`}
      <label class="f">Qtd.<input class="iQtd" inputmode="decimal" value="${it.quantidade}"></label>
      <label class="f">Valor unitário<input class="iVal" inputmode="decimal" value="${Number(it.valor_unit).toFixed(2).replace(".", ",")}"></label>
      <label class="f">Total<input class="iTot" disabled></label><button type="button" class="btn min iDel" aria-label="Remover item">✕</button></div>`;
@@ -537,13 +538,13 @@ async function dlgVenda(base, modo) {
     <label class="f">Vendedor responsável<input id="vVend" value="${esc(b.vendedor || "")}"></label></div>
    <div class="lin"><label class="f">Cliente *<input id="vCli" list="lCli" value="${esc(pesNome(b.pessoa_id))}" placeholder="Nome do cliente"><datalist id="lCli">${PESSOAS.filter((p) => p.tipo !== "fornecedor").map((p) => `<option value="${esc(p.nome)}">`).join("")}</datalist></label>
     <label class="f">CPF/CNPJ do cliente<input id="vDoc" inputmode="numeric"></label>
-    <label class="f">Categoria financeira<select id="vCat">${optsCat("receita", b.categoria || "3.01.02")}</select></label></div>
-   <h3 style="margin:6px 0 0;font-size:14px">Itens</h3><div id="vItens">${itens.map(linha).join("")}</div>
+    <label class="f">Categoria financeira<select id="vCat">${optsCat("receita", b.categoria || (CFG.tipo_venda === "servico" ? "3.01.01" : "3.01.02"))}</select></label></div>
+   <datalist id="lServ">${servs.map((x) => `<option value="${esc(x.descricao)}">`).join("")}</datalist><h3 style="margin:6px 0 0;font-size:14px">Itens</h3><div id="vItens">${itens.map(linha).join("")}</div>
    <div><button type="button" class="btn min" id="vAddItem">+ Adicionar item</button></div>
    <div class="lin"><label class="f">Desconto (R$)<input id="vDesc" inputmode="decimal" value="${Number(b.desconto || 0).toFixed(2).replace(".", ",")}"></label>
     <div class="box" style="padding:8px 12px"><div class="sub">Total da venda</div><div class="kpi" id="vTotal">R$ 0,00</div></div></div>
    <h3 style="margin:6px 0 0;font-size:14px">Informações de pagamento</h3>
-   <label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="vFin" ${b.financiada ? "checked" : ""}> Venda financiada (banco paga o financiamento e a loja recebe comissão)</label>
+   ${!CFG.estoque ? `<label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="vNfseCli" checked> Emitir NFS-e para o cliente (a CONTEF emite e o XML volta aqui em “Notas fiscais de serviço”)</label>` : ""}<label style="display:${CFG.financiada ? "flex" : "none"};gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="vFin" ${b.financiada ? "checked" : ""}> Venda financiada (banco paga o financiamento e a loja recebe comissão)</label>
    <div id="vFinBox" class="box" style="display:none;gap:10px">
     <div class="lin"><label class="f">Banco *<select id="vBanco"><option value="">Selecione</option>${toms.map((t) => `<option value="${esc(t.documento)}" ${t.documento === b.banco_documento ? "selected" : ""}>${esc(t.nome)}</option>`).join("")}<option value="outro">Outro banco</option></select></label>
      <label class="f" id="vBancoOutroL" style="display:none">Nome do banco<input id="vBancoNome"></label><label class="f" id="vBancoDocL" style="display:none">CNPJ do banco<input id="vBancoDoc" inputmode="numeric"></label></div>
@@ -571,15 +572,16 @@ async function dlgVenda(base, modo) {
       else { bancoDoc = sel; bancoNome = toms.find((t) => t.documento === sel).nome; } }
     const pes = PESSOAS.find((p) => p.nome.toLowerCase() === cli.toLowerCase());
     const payload = { empresa_id: EMP, data: $("#vData").value || hoje(), situacao: $("#vSit").value, pessoa_id: pes ? pes.id : null, cliente_nome: cli, cliente_documento: $("#vDoc").value.replace(/\D/g, "") || null,
-      categoria: $("#vCat").value || "3.01.02", vendedor: $("#vVend").value.trim() || null, desconto: num($("#vDesc").value), itens: its,
+      tipo: CFG.tipo_venda, categoria: $("#vCat").value || (CFG.tipo_venda === "servico" ? "3.01.01" : "3.01.02"), vendedor: $("#vVend").value.trim() || null, desconto: num($("#vDesc").value), itens: its,
       forma_pagamento: fin && !num($("#vEnt").value) ? "financiamento" : ($("#vForma").value || null), conta_id: $("#vConta").value || null, parcelas: Number($("#vParc").value), primeiro_vencimento: $("#vVenc").value || hoje(),
       obs_pagamento: $("#vObsP").value.trim() || null, obs_nota: $("#vObsN").value.trim() || null,
       financiada: fin, banco_nome: bancoNome, banco_documento: bancoDoc, valor_entrada: fin ? num($("#vEnt").value) : 0,
-      comissao_valor: fin && $("#vCom").value ? num($("#vCom").value) : null, comissao_competencia: fin ? $("#vComp").value.trim() : null, solicitar_nfse: fin && $("#vNfse").checked && $("#vSit").value === "aprovado" };
-    if (payload.solicitar_nfse && !(payload.comissao_valor > 0)) throw new Error("Informe o valor da comissão para solicitar a NFS-e (ou desmarque a solicitação).");
+      comissao_valor: fin && $("#vCom").value ? num($("#vCom").value) : null, comissao_competencia: fin ? $("#vComp").value.trim() : null, solicitar_nfse: $("#vSit").value === "aprovado" && (fin ? $("#vNfse").checked : !!($("#vNfseCli") && $("#vNfseCli").checked)) };
+    if (payload.solicitar_nfse && !fin && !payload.cliente_documento && !(pes && pes.documento)) throw new Error("Informe o CPF/CNPJ do cliente para emitir a NFS-e (ou desmarque a emissão).");
+    if (payload.solicitar_nfse && fin && !(payload.comissao_valor > 0)) throw new Error("Informe o valor da comissão para solicitar a NFS-e (ou desmarque a solicitação).");
     const { error } = await sb.rpc("fin_salvar_venda", { p: payload }); if (error) throw new Error(error.message);
     if (modo === "aprovar" && base) await sb.rpc("fin_cancelar_venda", { p_venda: base.id });
-    PESSOAS = (await sb.from("fin_pessoas").select("id,nome,tipo").eq("empresa_id", EMP).order("nome")).data || PESSOAS;
+    PESSOAS = (await sb.from("fin_pessoas").select("id,nome,tipo,documento").eq("empresa_id", EMP).order("nome")).data || PESSOAS;
     toast(payload.situacao === "orcamento" ? "Orçamento salvo." : (payload.solicitar_nfse ? "Venda salva e NFS-e da comissão solicitada." : "Venda salva.")); return true; } }]);
   // comportamento do formulário
   const recalc = () => { let t = 0; document.querySelectorAll(".itemV").forEach((r) => { const v = (num(r.querySelector(".iQtd").value) || 0) * num(r.querySelector(".iVal").value); r.querySelector(".iTot").value = brl(v); t += v; });
@@ -592,7 +594,7 @@ async function dlgVenda(base, modo) {
   $("#vAddItem").onclick = () => { $("#vItens").insertAdjacentHTML("beforeend", linha({ produto_id: "", descricao: "", quantidade: 1, valor_unit: 0 }, Date.now())); ligar(); recalc(); };
   const finUi = () => { const on = $("#vFin").checked; $("#vFinBox").style.display = on ? "grid" : "none"; const o = $("#vBanco").value === "outro"; $("#vBancoOutroL").style.display = $("#vBancoDocL").style.display = o ? "grid" : "none"; };
   $("#vFin").onchange = finUi; $("#vBanco").onchange = finUi; $("#vDesc").oninput = recalc; $("#vEnt").oninput = recalc;
-  $("#vCli").onchange = () => { };
+  $("#vCli").onchange = () => { const p = PESSOAS.find((x) => x.nome.toLowerCase() === $("#vCli").value.trim().toLowerCase()); if (p && p.documento && !$("#vDoc").value) $("#vDoc").value = p.documento; };
   ligar(); recalc(); finUi();
   return pr;
 }
@@ -624,7 +626,7 @@ async function telaNotas() {
   const { data, error } = await sb.rpc("fin_minhas_notas", { p_emp: EMP, p_limite: 300 });
   if (error) { $("#main").innerHTML = `<div class="aviso err">${esc(error.message)}</div>`; return; }
   $("#main").innerHTML = `<h1>Notas fiscais de serviço</h1>
-   <div class="barra"><span class="sub">As notas são emitidas pela CONTEF. Quando a nota sai, o XML e o PDF ficam disponíveis aqui.</span><span style="margin-left:auto"></span><button class="btn azul" id="nNova" type="button">+ Solicitar NFS-e de comissão</button></div>
+   <div class="barra"><span class="sub">As notas são emitidas pela CONTEF. Quando a nota sai, o XML e o PDF ficam disponíveis aqui.</span><span style="margin-left:auto"></span><button class="btn azul" id="nNova" type="button">+ ${CFG.financiada ? "Solicitar NFS-e de comissão" : "Solicitar NFS-e"}</button></div>
    <div class="tab">${(data || []).length ? `<table><thead><tr><th>Solicitada em</th><th>Descrição</th><th>Situação</th><th>Número</th><th>Arquivos</th></tr></thead><tbody>
     ${data.map((n) => `<tr><td>${new Date(n.criado_em).toLocaleDateString("pt-BR")}</td><td>${esc(n.resumo || "")}${n.venda_numero ? `<div class="sub">Venda nº ${n.venda_numero}</div>` : ""}</td><td>${statusNota(n)}</td><td>${esc(n.numero_nfse || "")}</td>
      <td>${n.tem_xml ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="xml" type="button">XML</button>` : ""} ${n.tem_pdf ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="pdf" type="button">PDF</button>` : ""}${!n.tem_xml && !n.tem_pdf ? `<span class="sub">—</span>` : ""}</td></tr>`).join("")}
@@ -640,6 +642,15 @@ async function telaNotas() {
   });
 }
 async function dlgNfseAvulsa() {
+  if (!CFG.financiada) return dialogo("Solicitar NFS-e", `
+   <div class="lin"><label class="f">Cliente (tomador) *<input id="aNome" list="lCli2"><datalist id="lCli2">${PESSOAS.filter((p) => p.tipo !== "fornecedor").map((p) => `<option value="${esc(p.nome)}">`).join("")}</datalist></label><label class="f">CPF/CNPJ *<input id="aDoc" inputmode="numeric"></label></div>
+   <div class="lin"><label class="f">Valor (R$) *<input id="aVal" inputmode="decimal"></label><label class="f">Data/competência<input id="aComp" value="${dbr(hoje())}"></label></div>
+   <label class="f">Serviço prestado *<input id="aObs" placeholder="Ex.: consulta ortopédica, 10 sessões de fisioterapia"></label>`,
+  [{ txt: "Cancelar" }, { txt: "Solicitar", cls: "verde", acao: async () => {
+    const nome = $("#aNome").value.trim(), doc = $("#aDoc").value.replace(/\D/g, "");
+    if (!nome || ![11, 14].includes(doc.length)) throw new Error("Informe o nome e um CPF (11 dígitos) ou CNPJ (14 dígitos)."); if (!$("#aObs").value.trim()) throw new Error("Descreva o serviço.");
+    const { error } = await sb.rpc("fin_solicitar_nfse_avulsa", { p_emp: EMP, p_tomador: nome, p_documento: doc, p_valor: num($("#aVal").value), p_competencia: $("#aComp").value.trim(), p_obs: $("#aObs").value.trim() });
+    if (error) throw new Error(error.message); toast("Solicitação enviada para a CONTEF."); return true; } }]);
   const toms = await tomadores();
   setTimeout(() => { const b = $("#aBanco"); if (b) b.onchange = () => { const o = b.value === "outro"; $("#aOutroL").style.display = $("#aDocL").style.display = o ? "grid" : "none"; }; }, 0);
   return dialogo("Solicitar NFS-e de comissão", `
