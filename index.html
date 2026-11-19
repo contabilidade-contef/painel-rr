@@ -91,6 +91,7 @@ const iso = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 6e
 const hoje = () => iso(new Date());
 const dbr = (s) => s ? s.slice(8, 10) + "/" + s.slice(5, 7) + "/" + s.slice(0, 4) : "";
 const num = (s) => { const t = String(s ?? "").trim().replace(/\s|R\$/g, ""); if (!t) return 0; return Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t); };
+const cpfOk = (c) => { const d = String(c || "").replace(/\D/g, ""); if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false; const dv = (n) => { let t = 0; for (let i = 0; i < n; i++) t += +d[i] * (n + 1 - i); const r = (t * 10) % 11; return r === 10 ? 0 : r; }; return dv(9) === +d[9] && dv(10) === +d[10]; };
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const addMes = (isoD, n) => { const [y, m, d] = isoD.split("-").map(Number); const ult = new Date(y, m - 1 + n + 1, 0).getDate(); return iso(new Date(y, m - 1 + n, Math.min(d, ult))); };
 
@@ -539,7 +540,12 @@ async function dlgVenda(base, modo) {
    <div class="lin"><label class="f">Cliente *<input id="vCli" list="lCli" value="${esc(pesNome(b.pessoa_id))}" placeholder="Nome do cliente"><datalist id="lCli">${PESSOAS.filter((p) => p.tipo !== "fornecedor").map((p) => `<option value="${esc(p.nome)}">`).join("")}</datalist></label>
     <label class="f">CPF/CNPJ do cliente<input id="vDoc" inputmode="numeric"></label>
     <label class="f">Categoria financeira<select id="vCat">${optsCat("receita", b.categoria || (CFG.tipo_venda === "servico" ? "3.01.01" : "3.01.02"))}</select></label></div>
-   <datalist id="lServ">${servs.map((x) => `<option value="${esc(x.descricao)}">`).join("")}</datalist><h3 style="margin:6px 0 0;font-size:14px">Itens</h3><div id="vItens">${itens.map(linha).join("")}</div>
+   ${CFG.dmed ? `<div class="box" style="display:grid;gap:8px"><b>Dados para a DMED</b><span class="sub">Obrigatórios na venda aprovada: CPF de quem paga e CPF do paciente. Data de nascimento só para paciente menor de idade ou sem CPF (IN RFB 2.074/2022).</span>
+     <label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" id="dMesmo" ${!b.beneficiario_nome || b.beneficiario_nome === pesNome(b.pessoa_id) ? "checked" : ""}> O paciente é o próprio cliente que está pagando</label>
+     <div class="lin"><label class="f" id="dNomeL">Nome do paciente *<input id="dNome" value="${esc(b.beneficiario_nome || "")}"></label>
+      <label class="f" id="dCpfL">CPF do paciente *<input id="dCpf" inputmode="numeric" value="${esc(b.beneficiario_cpf || "")}"></label>
+      <label class="f" id="dNascL">Data de nascimento do paciente *<input type="date" id="dNasc" value="${esc(b.beneficiario_nascimento || "")}"></label></div>
+     <div id="dSemL" style="display:flex;gap:16px;flex-wrap:wrap"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="dMenor" ${b.beneficiario_menor ? "checked" : ""}> Paciente menor de idade</label><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="dSem" ${b.beneficiario_sem_cpf ? "checked" : ""}> Paciente não possui CPF</label></div></div>` : ""}<datalist id="lServ">${servs.map((x) => `<option value="${esc(x.descricao)}">`).join("")}</datalist><h3 style="margin:6px 0 0;font-size:14px">Itens</h3><div id="vItens">${itens.map(linha).join("")}</div>
    <div><button type="button" class="btn min" id="vAddItem">+ Adicionar item</button></div>
    <div class="lin"><label class="f">Desconto (R$)<input id="vDesc" inputmode="decimal" value="${Number(b.desconto || 0).toFixed(2).replace(".", ",")}"></label>
     <div class="box" style="padding:8px 12px"><div class="sub">Total da venda</div><div class="kpi" id="vTotal">R$ 0,00</div></div></div>
@@ -576,8 +582,16 @@ async function dlgVenda(base, modo) {
       forma_pagamento: fin && !num($("#vEnt").value) ? "financiamento" : ($("#vForma").value || null), conta_id: $("#vConta").value || null, parcelas: Number($("#vParc").value), primeiro_vencimento: $("#vVenc").value || hoje(),
       obs_pagamento: $("#vObsP").value.trim() || null, obs_nota: $("#vObsN").value.trim() || null,
       financiada: fin, banco_nome: bancoNome, banco_documento: bancoDoc, valor_entrada: fin ? num($("#vEnt").value) : 0,
-      comissao_valor: fin && $("#vCom").value ? num($("#vCom").value) : null, comissao_competencia: fin ? $("#vComp").value.trim() : null, solicitar_nfse: $("#vSit").value === "aprovado" && (fin ? $("#vNfse").checked : !!($("#vNfseCli") && $("#vNfseCli").checked)) };
+      comissao_valor: fin && $("#vCom").value ? num($("#vCom").value) : null, comissao_competencia: fin ? $("#vComp").value.trim() : null, ...(CFG.dmed ? (() => { const mesmo = $("#dMesmo").checked; return { beneficiario_nome: mesmo ? cli : $("#dNome").value.trim(), beneficiario_cpf: mesmo ? ($("#vDoc").value.replace(/\D/g, "") || (pes && pes.documento) || "") : $("#dCpf").value.replace(/\D/g, ""), beneficiario_nascimento: $("#dNasc").value || null, beneficiario_sem_cpf: !mesmo && $("#dSem").checked, beneficiario_menor: !mesmo && $("#dMenor").checked }; })() : {}),
+      solicitar_nfse: $("#vSit").value === "aprovado" && (fin ? $("#vNfse").checked : !!($("#vNfseCli") && $("#vNfseCli").checked)) };
     if (payload.solicitar_nfse && !fin && !payload.cliente_documento && !(pes && pes.documento)) throw new Error("Informe o CPF/CNPJ do cliente para emitir a NFS-e (ou desmarque a emissão).");
+    if (CFG.dmed && payload.situacao === "aprovado") {
+      const docPag = payload.cliente_documento || (pes && pes.documento) || "";
+      if (!cpfOk(docPag)) throw new Error("DMED: informe um CPF válido do cliente que está pagando.");
+      if (!payload.beneficiario_nome) throw new Error("DMED: informe o nome do paciente.");
+      if (!payload.beneficiario_nascimento && (payload.beneficiario_menor || payload.beneficiario_sem_cpf)) throw new Error("DMED: informe a data de nascimento do paciente (menor de idade ou sem CPF).");
+      if (!payload.beneficiario_sem_cpf && !cpfOk(payload.beneficiario_cpf)) throw new Error("DMED: informe um CPF válido do paciente (ou marque que ele não possui CPF).");
+    }
     if (payload.solicitar_nfse && fin && !(payload.comissao_valor > 0)) throw new Error("Informe o valor da comissão para solicitar a NFS-e (ou desmarque a solicitação).");
     const { error } = await sb.rpc("fin_salvar_venda", { p: payload }); if (error) throw new Error(error.message);
     if (modo === "aprovar" && base) await sb.rpc("fin_cancelar_venda", { p_venda: base.id });
@@ -596,6 +610,9 @@ async function dlgVenda(base, modo) {
   $("#vFin").onchange = finUi; $("#vBanco").onchange = finUi; $("#vDesc").oninput = recalc; $("#vEnt").oninput = recalc;
   $("#vCli").onchange = () => { const p = PESSOAS.find((x) => x.nome.toLowerCase() === $("#vCli").value.trim().toLowerCase()); if (p && p.documento && !$("#vDoc").value) $("#vDoc").value = p.documento; };
   ligar(); recalc(); finUi();
+  if (CFG.dmed) { const dUi = () => { const m = $("#dMesmo").checked; $("#dNomeL").style.display = $("#dCpfL").style.display = m ? "none" : "grid"; $("#dSemL").style.display = m ? "none" : "flex";
+      $("#dCpf").disabled = !m && $("#dSem").checked; $("#dNascL").style.display = !m && ($("#dMenor").checked || $("#dSem").checked) ? "grid" : "none"; };
+    $("#dMesmo").onchange = dUi; $("#dSem").onchange = dUi; $("#dMenor").onchange = dUi; dUi(); }
   return pr;
 }
 async function dlgVerVenda(v) {
@@ -608,7 +625,7 @@ async function dlgVerVenda(v) {
    ${v.financiada ? `<div class="aviso">Financiada pelo ${esc(v.banco_nome)} · entrada ${brl(v.valor_entrada)} · financiado ${brl(v.valor_financiado)}${v.comissao_valor ? " · comissão " + brl(v.comissao_valor) + " (ref. " + esc(v.comissao_competencia || "") + ")" : ""}</div>` : ""}
    <h3 style="margin:6px 0 0;font-size:14px">Parcelas geradas</h3>
    ${(tits || []).length ? `<table><tbody>${tits.map((t) => `<tr><td>${esc(t.descricao)}</td><td>${dbr(t.vencimento)}</td><td class="n">${brl(t.valor)}</td><td>${t.status === "pago" ? "Recebido" : t.status === "cancelado" ? "Cancelado" : "Em aberto"}</td></tr>`).join("")}</tbody></table>` : `<div class="sub">Nenhuma (orçamento).</div>`}
-   ${v.obs_pagamento ? `<div><div class="sub">Observações de pagamento</div>${esc(v.obs_pagamento)}</div>` : ""}${v.obs_nota ? `<div><div class="sub">Observações da nota</div>${esc(v.obs_nota)}</div>` : ""}`, [{ txt: "Fechar" }]);
+   ${v.beneficiario_nome ? `<div class="aviso">Paciente (DMED): ${esc(v.beneficiario_nome)} · ${v.beneficiario_sem_cpf ? "sem CPF" : "CPF " + esc(v.beneficiario_cpf || "")} ${v.beneficiario_nascimento ? " · nascimento " + dbr(v.beneficiario_nascimento) : ""}${v.beneficiario_menor ? " · menor de idade" : ""}</div>` : ""}${v.obs_pagamento ? `<div><div class="sub">Observações de pagamento</div>${esc(v.obs_pagamento)}</div>` : ""}${v.obs_nota ? `<div><div class="sub">Observações da nota</div>${esc(v.obs_nota)}</div>` : ""}`, [{ txt: "Fechar" }]);
 }
 async function dlgSolicitarNfse(v) {
   return dialogo("Solicitar NFS-e da comissão", `<div class="aviso">Venda nº ${v.numero} · ${esc(v.banco_nome)}</div>
@@ -631,7 +648,7 @@ async function telaNotas() {
     ${data.map((n) => `<tr><td>${new Date(n.criado_em).toLocaleDateString("pt-BR")}</td><td>${esc(n.resumo || "")}${n.venda_numero ? `<div class="sub">Venda nº ${n.venda_numero}</div>` : ""}</td><td>${statusNota(n)}</td><td>${esc(n.numero_nfse || "")}</td>
      <td>${n.tem_xml ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="xml" type="button">XML</button>` : ""} ${n.tem_pdf ? `<button class="btn min bArq" data-id="${n.pedido_id}" data-t="pdf" type="button">PDF</button>` : ""}${!n.tem_xml && !n.tem_pdf ? `<span class="sub">—</span>` : ""}</td></tr>`).join("")}
    </tbody></table>` : `<div class="vazio">Nenhuma nota solicitada ainda.</div>`}</div>`;
-  $("#nNova").onclick = async () => { if (await dlgNfseAvulsa()) telaNotas(); };
+  $("#nNova").onclick = async () => { if (CFG.dmed ? await dlgVenda() : await dlgNfseAvulsa()) telaNotas(); };
   document.querySelectorAll(".bArq").forEach((b) => b.onclick = async () => {
     const { data: conteudo, error: er } = await sb.rpc("fin_nota_arquivo", { p_emp: EMP, p_pedido: b.dataset.id, p_tipo: b.dataset.t });
     if (er || !conteudo) return toast("Arquivo indisponível no momento.", "warn");
